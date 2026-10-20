@@ -15,6 +15,9 @@
 import Cocoa
 import Security
 import WebKit
+#if canImport(FullPanelKit)
+import FullPanelKit
+#endif
 
 // MARK: - Passkey capability
 
@@ -114,6 +117,41 @@ func parseLaunchOptions() -> LaunchOptions {
 
 let launchOptions = parseLaunchOptions()
 
+/// Boolean environment override: "1"/"true"/"yes" or "0"/"false"/"no";
+/// unset (or anything else) leaves the built-in default.
+func environmentFlag(_ key: String) -> Bool? {
+    switch ProcessInfo.processInfo.environment[key]?.lowercased() {
+    case "1", "true", "yes": return true
+    case "0", "false", "no": return false
+    default: return nil
+    }
+}
+
+/// FullPanelKit builds default to FullPanel fullscreen and the notch guard, so
+/// the app works when launched from Finder or the Dock. CHROMELESS_FULLPANEL=0
+/// and CHROMELESS_NOTCH_GUARD=0 turn them off.
+#if canImport(FullPanelKit)
+let fullPanelEnabled = environmentFlag("CHROMELESS_FULLPANEL") ?? true
+#else
+let fullPanelEnabled = false
+#endif
+
+/// Notch guard (see NotchGuard.swift). CHROMELESS_NOTCH_SIMULATE
+/// runs it in a normal window against a fake housing: "1" = 220x38 centered at
+/// the top, or "x,y,w,h" in points from the window's top-left.
+let notchGuardEnv = ProcessInfo.processInfo.environment
+let notchGuardSimulation: String? = notchGuardEnv["CHROMELESS_NOTCH_SIMULATE"]
+let notchGuardEnabled = environmentFlag("CHROMELESS_NOTCH_GUARD")
+    ?? (fullPanelEnabled || notchGuardSimulation != nil)
+let notchGuardTestDirectory: String? = notchGuardEnv["CHROMELESS_NOTCH_TEST"]
+/// CHROMELESS_NOTCH_MODE=off|hybrid|everywhere, else the last mode chosen in
+/// View ▸ Notch (⌥⌘N cycles), else iPhone style everywhere.
+let notchGuardInitialMode: NotchMode =
+    notchGuardEnv["CHROMELESS_NOTCH_MODE"].flatMap(NotchMode.init(rawValue:))
+    ?? (notchGuardTestDirectory == nil
+        ? UserDefaults.standard.string(forKey: NotchGuard.modeKey).flatMap(NotchMode.init(rawValue:)) : nil)
+    ?? .everywhere
+
 // MARK: - Start page
 
 let startPageHTML = """
@@ -212,6 +250,9 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate,
     private var toastHide: DispatchWorkItem?
     private var lastProgress: CGFloat = 0
     private var onStartPage = false
+    private(set) var notchGuard: NotchGuard?
+    private var notchGuardWidth: CGFloat = 0
+    private var notchGuardTokens: [NSObjectProtocol] = []
     var onClose: (() -> Void)?
 
     init(url: URL?, size: NSSize?, snap: SnapJob?, isPrimary: Bool) {
@@ -236,14 +277,40 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate,
                 forMainFrameOnly: false)
             conf.userContentController.addUserScript(hideWebAuthn)
         }
+        if notchGuardTestDirectory != nil {
+            // Test runs must not touch the user's cookies, cache or logins.
+            conf.websiteDataStore = .nonPersistent()
+        }
+        if notchGuardEnabled {
+            notchGuard = NotchGuard(configuration: conf,
+                                    persistHints: notchGuardTestDirectory == nil,
+                                    useHints: notchGuardEnv["CHROMELESS_NOTCH_HINTS"] != "0",
+                                    mode: notchGuardInitialMode)
+        }
         webView = BrowserWebView(frame: .zero, configuration: conf)
+        notchGuard?.attach(to: webView)
         snapJob = snap
 
         let contentSize = size ?? NSSize(width: 1160, height: 760)
+        #if canImport(FullPanelKit)
+        let window: NSWindow
+        if fullPanelEnabled {
+            window = FullPanelWindow(
+                contentRect: NSRect(origin: .zero, size: contentSize),
+                styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
+                backing: .buffered, defer: false)
+        } else {
+            window = NSWindow(
+                contentRect: NSRect(origin: .zero, size: contentSize),
+                styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
+                backing: .buffered, defer: false)
+        }
+        #else
         let window = NSWindow(
             contentRect: NSRect(origin: .zero, size: contentSize),
             styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
             backing: .buffered, defer: false)
+        #endif
         super.init(window: window)
 
         window.title = "Chromeless"
@@ -258,6 +325,12 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate,
         window.collectionBehavior.insert(.fullScreenPrimary)
         window.acceptsMouseMovedEvents = true
         window.delegate = self
+        #if canImport(FullPanelKit)
+        if let fpk = window as? FullPanelWindow {
+            fpk.fullPanelEnabled = true
+            NSLog("CHROMELESSFPK enabled")
+        }
+        #endif
         setTrafficLights(visible: false)
 
         let container = LayoutReportingView(frame: NSRect(origin: .zero, size: contentSize))
@@ -277,9 +350,30 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate,
 
         buildOverlays(in: container)
         observeWebView()
+        observations.append(
+            webView.observe(\.isLoading, options: [.new]) {
+                [weak self] _, change in
+                if change.newValue == false {
+                    DispatchQueue.main.async {
+                        self?.scheduleNotchScan()
+                    }
+                }
+            }
+        )
+        if let notchGuard {
+            observations.append(webView.observe(\.fullscreenState, options: [.new]) { wv, _ in
+                notchGuard.elementFullscreenChanged(active: wv.fullscreenState != .notInFullscreen)
+            })
+            #if canImport(FullPanelKit)
+            notchGuardTokens.append(NotificationCenter.default.addObserver(
+                forName: FullPanelWindow.stateDidChangeNotification, object: window, queue: .main
+            ) { [weak self] _ in self?.updateNotchGuardGeometry() })
+            #endif
+        }
+
 
         window.center()
-        if isPrimary && snap == nil {
+        if isPrimary && snap == nil && notchGuardTestDirectory == nil {
             window.setFrameUsingName("ChromelessMain")
             window.setFrameAutosaveName("ChromelessMain")
         } else if let key = NSApp.keyWindow {
@@ -290,6 +384,9 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate,
         installMouseMonitor()
 
         if let url { navigate(to: url) } else { loadStartPage() }
+        if let dir = notchGuardTestDirectory, let url {
+            NotchGuardTestDriver(controller: self, url: url, directory: dir).start()
+        }
     }
 
     required init?(coder: NSCoder) { fatalError("not used") }
@@ -383,6 +480,40 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate,
         toastLabel.frame = NSRect(x: 16, y: (th - ts.height) / 2, width: ts.width, height: ts.height)
 
         progressBar.frame = NSRect(x: 0, y: b.height - 2, width: b.width * lastProgress, height: 2)
+        updateNotchGuardGeometry()
+    }
+
+    /// Housing rectangle in web view coordinates (top-left origin): the real
+    /// one while FullPanel fullscreen is active, the simulated one in test
+    /// mode, otherwise none.
+    private func updateNotchGuardGeometry() {
+        guard let notchGuard else { return }
+        let bounds = webView.bounds
+        var housing: CGRect? = nil
+        if let sim = notchGuardSimulation {
+            let v = sim.split(separator: ",").compactMap { Double($0.trimmingCharacters(in: .whitespaces)) }
+            housing = v.count == 4
+                ? CGRect(x: v[0], y: v[1], width: v[2], height: v[3])
+                : CGRect(x: (bounds.width - 220) / 2, y: 0, width: 220, height: 38)
+        }
+        #if canImport(FullPanelKit)
+        if notchGuardSimulation == nil, let fpk = window as? FullPanelWindow,
+           fpk.isFullPanelActive, !isExitingFullScreen {
+            let layout = fpk.fullPanelLayout
+            if layout.isActive, let h = layout.cameraHousing {
+                // fullPanelLayout is in content coordinates; the web view fills
+                // the content view, so they coincide.
+                housing = h
+            }
+        }
+        #endif
+        notchGuard.setHousing(housing)
+        notchGuard.layoutBand()
+        if bounds.width != notchGuardWidth {
+            let first = notchGuardWidth == 0
+            notchGuardWidth = bounds.width
+            if !first { notchGuard.layoutChanged("resize") }
+        }
     }
 
     private func observeWebView() {
@@ -395,7 +526,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate,
                 self?.window?.title = t.isEmpty ? "Chromeless" : t
             },
             webView.observe(\.url) { wv, _ in
-                if let u = wv.url, u.scheme == "https" || u.scheme == "http" {
+                if notchGuardTestDirectory == nil, let u = wv.url, u.scheme == "https" || u.scheme == "http" {
                     UserDefaults.standard.set(u.absoluteString, forKey: "LastURL")
                 }
             },
@@ -547,9 +678,14 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate,
     @objc func goBackAction(_ sender: Any?) { webView.goBack() }
     @objc func goForwardAction(_ sender: Any?) { webView.goForward() }
 
-    @objc func zoomInPage(_ sender: Any?) { webView.pageZoom = min(webView.pageZoom * 1.1, 5.0) }
-    @objc func zoomOutPage(_ sender: Any?) { webView.pageZoom = max(webView.pageZoom / 1.1, 0.25) }
-    @objc func resetZoom(_ sender: Any?) { webView.pageZoom = 1.0 }
+    @objc func zoomInPage(_ sender: Any?) { setPageZoom(min(webView.pageZoom * 1.1, 5.0)) }
+    @objc func zoomOutPage(_ sender: Any?) { setPageZoom(max(webView.pageZoom / 1.1, 0.25)) }
+    @objc func resetZoom(_ sender: Any?) { setPageZoom(1.0) }
+
+    func setPageZoom(_ zoom: CGFloat) {
+        webView.pageZoom = zoom
+        notchGuard?.layoutChanged("zoom")
+    }
 
     @objc func saveSnapshot(_ sender: Any?) {
         let formatter = DateFormatter()
@@ -583,6 +719,26 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate,
 
     @objc func showHelpPage(_ sender: Any?) { loadStartPage() }
 
+    @objc func selectNotchMode(_ sender: NSMenuItem) {
+        guard let raw = sender.representedObject as? String, let mode = NotchMode(rawValue: raw) else { return }
+        applyNotchMode(mode)
+    }
+
+    @objc func cycleNotchMode(_ sender: Any?) {
+        guard let current = notchGuard?.mode else { return }
+        let all = NotchMode.allCases
+        applyNotchMode(all[(all.firstIndex(of: current)! + 1) % all.count])
+    }
+
+    private func applyNotchMode(_ mode: NotchMode) {
+        guard let notchGuard else { return }
+        notchGuard.mode = mode
+        if notchGuardTestDirectory == nil {
+            UserDefaults.standard.set(mode.rawValue, forKey: NotchGuard.modeKey)
+        }
+        showToast("Notch: \(mode.title)")
+    }
+
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
         switch menuItem.action {
         case #selector(goBackAction(_:)): return webView.canGoBack
@@ -592,19 +748,191 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate,
         case #selector(togglePin(_:)):
             menuItem.state = window?.level == .floating ? .on : .off
             return true
+        case #selector(selectNotchMode(_:)):
+            menuItem.state = (menuItem.representedObject as? String) == notchGuard?.mode.rawValue ? .on : .off
+            return notchGuard != nil
+        case #selector(cycleNotchMode(_:)):
+            return notchGuard != nil
         default: return true
         }
     }
 
     // MARK: NSWindowDelegate
 
-    func windowDidEnterFullScreen(_ notification: Notification) { setTrafficLights(visible: true) }
-    func windowDidExitFullScreen(_ notification: Notification) { setTrafficLights(visible: false) }
+
+    private func scheduleNotchScan() {
+        guard ProcessInfo.processInfo.environment["CHROMELESS_NOTCH_SCAN"] == "1"
+        else { return }
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+            [weak self] in self?.scanNotch()
+        }
+    }
+
+    private func scanNotch() {
+        #if canImport(FullPanelKit)
+        guard let fpk = window as? FullPanelWindow,
+              fpk.isFullPanelActive,
+              let screen = fpk.screen,
+              let left = screen.auxiliaryTopLeftArea,
+              let right = screen.auxiliaryTopRightArea,
+              right.minX > left.maxX,
+              left.height > 0,
+              webView.bounds.width > 0,
+              webView.bounds.height > 0
+        else {
+            NSLog("CHROMELESS NOTCH SCAN: geometry unavailable or fullscreen inactive")
+            return
+        }
+
+        let notch = NSRect(
+            x: left.maxX,
+            y: left.minY,
+            width: right.minX - left.maxX,
+            height: left.height
+        )
+        let local = webView.convert(fpk.convertFromScreen(notch), from: nil)
+        let x = local.minX - webView.bounds.minX
+        let y = webView.isFlipped
+            ? local.minY - webView.bounds.minY
+            : webView.bounds.maxY - local.maxY
+
+        let script = """
+        (() => {
+            const sx = innerWidth / \(Double(webView.bounds.width));
+            const sy = innerHeight / \(Double(webView.bounds.height));
+            const n = {
+                x: \(Double(x)) * sx,
+                y: \(Double(y)) * sy,
+                w: \(Double(local.width)) * sx,
+                h: \(Double(local.height)) * sy
+            };
+
+            const hits = [];
+            let inspected = 0;
+            const selector =
+                'a,button,input,select,textarea,nav,header,' +
+                '[role="button"],[role="link"],[role="menuitem"],[role="searchbox"]';
+
+            for (const el of document.querySelectorAll(selector)) {
+                if (++inspected > 12000 || hits.length >= 20) break;
+                const r = el.getBoundingClientRect();
+                const x1 = Math.max(r.left, n.x);
+                const y1 = Math.max(r.top, n.y);
+                const x2 = Math.min(r.right, n.x + n.w);
+                const y2 = Math.min(r.bottom, n.y + n.h);
+                if (x2 <= x1 || y2 <= y1) continue;
+
+                const style = getComputedStyle(el);
+                if (style.display === 'none' ||
+                    style.visibility !== 'visible' ||
+                    Number(style.opacity) === 0) continue;
+
+                const top = document.elementFromPoint(
+                    (x1 + x2) / 2, (y1 + y2) / 2
+                );
+                if (!top || (top !== el && !el.contains(top))) continue;
+
+                hits.push({
+                    tag: el.tagName.toLowerCase(),
+                    id: el.id.slice(0, 40),
+                    position: style.position,
+                    overlap: [
+                        Math.round(x1), Math.round(y1),
+                        Math.round(x2 - x1), Math.round(y2 - y1)
+                    ]
+                });
+            }
+
+            return JSON.stringify({
+                host: location.hostname,
+                viewport: [innerWidth, innerHeight],
+                notch: {
+                    x: Math.round(n.x), y: Math.round(n.y),
+                    width: Math.round(n.w), height: Math.round(n.h)
+                },
+                inspected,
+                hits
+            });
+        })()
+        """
+
+        webView.evaluateJavaScript(script) { result, error in
+            if let error {
+                NSLog("CHROMELESS NOTCH SCAN ERROR: %@",
+                      error.localizedDescription)
+            } else if let report = result as? String {
+                NSLog("CHROMELESS NOTCH SCAN: %@", report)
+            }
+        }
+        #endif
+    }
+
+    private func applyFullPanelWebKitInset(preparingToEnter: Bool = false) {
+        #if canImport(FullPanelKit)
+        if #available(macOS 26.0, *) {
+            // The notch guard owns obscuredContentInsets when it is enabled.
+            if notchGuard != nil { return }
+            let requested = ProcessInfo.processInfo.environment[
+                "CHROMELESS_NOTCH_INSET"] == "1"
+            let fpk = window as? FullPanelWindow
+            let active = preparingToEnter || (fpk?.isFullPanelActive == true)
+            let inset: CGFloat = requested && active
+                ? (fpk?.screen?.safeAreaInsets.top ?? 0) : 0
+
+            webView.obscuredContentInsets = NSEdgeInsets(
+                top: inset, left: 0, bottom: 0, right: 0)
+
+            if requested {
+                // Restore WebKit's automatic page-derived background.
+                webView.underPageBackgroundColor = nil
+            }
+
+            NSLog("CHROMELESSFPK WebKit inset=%.1f active=%d",
+                  Double(inset), active ? 1 : 0)
+        }
+        #endif
+    }
+
+    func windowWillEnterFullScreen(_ notification: Notification) {
+        applyFullPanelWebKitInset(preparingToEnter: true)
+    }
+
+    func windowDidEnterFullScreen(_ notification: Notification) {
+        setTrafficLights(visible: true)
+        scheduleNotchScan()
+        updateNotchGuardGeometry()
+        #if canImport(FullPanelKit)
+        if let fpk = window as? FullPanelWindow {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
+                NSLog("CHROMELESSFPK diagnostics: %@",
+                      String(describing: fpk.fullPanelDiagnostics()))
+                self.applyFullPanelWebKitInset()
+            }
+        }
+        #endif
+    }
+    private var isExitingFullScreen = false
+
+    func windowWillExitFullScreen(_ notification: Notification) {
+        // Drop the inset before the window shrinks back.
+        isExitingFullScreen = true
+        updateNotchGuardGeometry()
+    }
+
+    func windowDidExitFullScreen(_ notification: Notification) {
+        isExitingFullScreen = false
+        setTrafficLights(visible: false)
+        applyFullPanelWebKitInset()
+        updateNotchGuardGeometry()
+    }
 
     func windowWillClose(_ notification: Notification) {
         if let monitor = mouseMonitor { NSEvent.removeMonitor(monitor) }
         mouseMonitor = nil
         observations.removeAll()
+        notchGuard?.invalidate()
+        notchGuardTokens.forEach { NotificationCenter.default.removeObserver($0) }
         onClose?()
     }
 
@@ -613,6 +941,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate,
     func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
         let u = webView.url?.absoluteString
         if u != nil && u != "about:blank" { onStartPage = false }
+        notchGuard?.documentCommitted(url: webView.url)
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
@@ -816,6 +1145,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let fullScreen = viewMenu.addItem(withTitle: "Enter Full Screen",
                                           action: #selector(NSWindow.toggleFullScreen(_:)), keyEquivalent: "f")
         fullScreen.keyEquivalentModifierMask = [.command, .control]
+        if notchGuardEnabled {
+            let notchMenu = NSMenu(title: "Notch")
+            for mode in NotchMode.allCases {
+                let item = notchMenu.addItem(withTitle: mode.title,
+                                             action: #selector(BrowserWindowController.selectNotchMode(_:)),
+                                             keyEquivalent: "")
+                item.representedObject = mode.rawValue
+            }
+            notchMenu.addItem(.separator())
+            let cycle = notchMenu.addItem(withTitle: "Next Notch Mode",
+                                          action: #selector(BrowserWindowController.cycleNotchMode(_:)),
+                                          keyEquivalent: "n")
+            cycle.keyEquivalentModifierMask = [.command, .option]
+            viewMenu.addItem(.separator())
+            viewMenu.addItem(withTitle: "Notch", action: nil, keyEquivalent: "").submenu = notchMenu
+        }
         main.addItem(withTitle: "View", action: nil, keyEquivalent: "").submenu = viewMenu
 
         let historyMenu = NSMenu(title: "History")

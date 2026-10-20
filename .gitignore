@@ -3,3 +3,6 @@ Chromeless.icns
 build/
 *.provisionprofile
 .DS_Store
+.build/
+Chromeless-FullPanelKit.app/
+tests/notch/results/

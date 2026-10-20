@@ -1,0 +1,14 @@
+<!doctype html><meta charset=utf-8><title>late header</title><link rel=stylesheet href=common.css>
+<style>
+#mast{position:fixed;top:0;left:0;right:0;height:56px;background:#fff;border-bottom:1px solid #eee;z-index:9}
+#mast .c{display:flex;justify-content:center;align-items:center;height:56px}
+#mast input{width:520px;height:36px;border:1px solid #ccc;border-radius:18px;padding:0 14px}
+body{padding-top:56px}
+</style>
+<div id=mast></div>
+<main><h1>Masthead rendered by script</h1><p>The app shell paints first; the search box is inserted 300 ms after DOMContentLoaded, like an SPA skeleton.</p></main><div class=tall></div>
+<script>
+document.addEventListener('DOMContentLoaded', () => setTimeout(() => {
+  document.getElementById('mast').innerHTML = '<div class=c><input type=search placeholder="Search"></div>';
+}, 300));
+</script>
