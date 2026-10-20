@@ -1,0 +1,5 @@
+html,body{margin:0;font:15px/1.5 -apple-system,system-ui,sans-serif;color:#1d1d1f;background:#fff}
+main{max-width:980px;margin:0 auto;padding:40px 20px}
+.tall{height:2600px;background:repeating-linear-gradient(#fff 0 120px,#f3f4f6 120px 240px)}
+nav a,.btn{color:inherit;text-decoration:none;padding:6px 10px;border-radius:6px}
+nav a:hover{background:rgba(0,0,0,.08)}

@@ -1,0 +1,17 @@
+<!doctype html><meta charset=utf-8><title>spa</title><link rel=stylesheet href=common.css>
+<style>
+header{position:fixed;top:0;left:0;right:0;height:52px;background:#fff;border-bottom:1px solid #e5e7eb;display:flex;align-items:center;padding:0 16px;z-index:9}
+header .brand{font-weight:700;width:180px}
+header .tabs{flex:1;display:flex;justify-content:center;gap:4px}
+body{padding-top:52px}
+</style>
+<header><div class=brand>SPA</div><div class=tabs id=tabs></div></header>
+<main id=view><h1>Home route</h1><p>No centered controls yet. After ~2.5 s (well after load) the app "navigates" with pushState and renders centered tabs.</p></main><div class=tall></div>
+<script>
+setTimeout(() => {
+  history.pushState({}, '', '#/projects');
+  const tabs = document.getElementById('tabs');
+  for (const t of ['Overview','Projects','Insights','Settings']) { const b = document.createElement('button'); b.textContent = t; b.className='btn'; b.style.border='0'; b.style.background='#eef2ff'; tabs.append(b); }
+  document.getElementById('view').innerHTML = '<h1>Projects route</h1><p>Centered tabs inserted by DOM mutation.</p>';
+}, 2500);
+</script>

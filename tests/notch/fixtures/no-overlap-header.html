@@ -1,0 +1,9 @@
+<!doctype html><meta charset=utf-8><title>no overlap header</title><link rel=stylesheet href=common.css>
+<style>
+header{position:sticky;top:0;height:64px;background:#0d1117;color:#e6edf3;display:flex;align-items:center;justify-content:space-between;padding:0 16px;z-index:5}
+header .l,header .r{display:flex;gap:10px;align-items:center}
+header a,header button{color:#e6edf3;background:none;border:1px solid #30363d;border-radius:6px;padding:5px 9px;font:inherit;font-size:13px;text-decoration:none}
+</style>
+<header><div class=l><a href="#home" aria-label=Home>&#9673;</a><a href="#org">octo-org</a><span>/</span><a href="#repo">hello-world</a></div>
+<div class=r><button>Search or jump to…</button><a href="#issues">Issues</a><a href="#pulls">Pull requests</a><a href="#me">@me</a></div></header>
+<main><h1>Full-width header, nothing in the middle</h1><p>Expect: no inset; page stays full-bleed beside the housing.</p></main><div class=tall></div>

@@ -1,0 +1,9 @@
+<!doctype html><meta charset=utf-8><title>sticky nav</title><link rel=stylesheet href=common.css>
+<style>
+.hero{height:420px;background:linear-gradient(135deg,#1e3a8a,#7c3aed);color:#fff;display:flex;align-items:flex-end;justify-content:center;padding-bottom:40px;font-size:40px;font-weight:700}
+.sub{position:sticky;top:0;background:#fff;border-bottom:1px solid #ddd;z-index:3}
+.sub nav{display:flex;justify-content:center;gap:30px;height:48px;align-items:center}
+</style>
+<div class=hero>Product</div>
+<div class=sub><nav><a href="#overview">Overview</a><a href="#why">Why it</a><a href="#tech">Tech Specs</a><a href="#compare">Compare</a><a href="#buy">Buy</a></nav></div>
+<main><p>The sub-navigation only reaches the housing after it sticks (scroll).</p></main><div class=tall></div>

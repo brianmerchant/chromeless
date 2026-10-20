@@ -2,18 +2,59 @@
 
 **The browser that isn't there.** The window *is* the webpage — no tabs, no toolbar, no address bar, no chrome at all. Made for clean screenshots, fullscreen YouTube, dashboards, and anything else that deserves the whole window.
 
-A native macOS app in one Swift file, built on WKWebView (the Safari engine). No Electron, no dependencies, ~450 KB built.
+A native macOS app built on WKWebView (the Safari engine). No Electron, ~1 MB built.
+
+> **This fork** ([brianmerchant/chromeless](https://github.com/brianmerchant/chromeless)) adds [FullPanelKit](https://github.com/brianmerchant/FullPanelKit) fullscreen, which uses the whole MacBook display beside the camera housing, and iPhone-style page scrolling around the housing. Upstream: [antiwork/chromeless](https://github.com/antiwork/chromeless).
 
 ![chromeless start page](docs/chromeless.png)
 
 ## Build
 
 ```sh
-./build.sh        # → Chromeless.app
+./build.sh                                          # → ./Chromeless.app
+./build.sh ~/Downloads/Chromeless-Build/Chromeless.app  # or any output path ending in .app
 open Chromeless.app
 ```
 
-Requires the Xcode Command Line Tools (`xcode-select --install`). Optionally `mv Chromeless.app /Applications/`.
+Requires the Xcode Command Line Tools (`xcode-select --install`, Swift 5.9+). `build.sh` runs `swift build -c release` (Swift Package Manager) and packages the executable, icon and Info.plist into the app.
+
+- **Dependency:** `https://github.com/brianmerchant/FullPanelKit.git`, `exact: "0.1.0"` (tag `v0.1.0`, commit `1911fa2146b383b9b8fe76570d530075bb838935`, recorded in `Package.resolved`). The build passes `--force-resolved-versions`, so it never re-resolves silently. No local path dependency, no vendored source.
+- **App name and bundle identifier:** `Chromeless.app`, `com.brianmerchant.chromeless`, separate from upstream Chromeless (`com.chromeless.app`). It has its own preferences, cookies (`~/Library/WebKit/<id>`) and install. Override with `BUNDLE_ID=…`. `build.sh` refuses to replace an existing bundle that has a different identifier.
+
+## Fullscreen beside the camera housing (FullPanelKit)
+
+Windows are `FullPanelWindow`s with FullPanel enabled at creation, before any fullscreen entry. `⌃⌘F` (or the green button) enters a real AppKit fullscreen Space: Mission Control, Spaces swipes, menu-bar reveal at the top edge and normal exit all work. On a MacBook with a camera housing, the window covers the whole display. If FullPanel isn't possible (external display, Split View, "Always show menu bar in full screen", changed private macOS interfaces), you get ordinary fullscreen. To get plain AppKit fullscreen, launch the binary with `CHROMELESS_FULLPANEL=0`.
+
+### Notch area modes
+
+**View ▸ Notch** (or `⌥⌘N` to cycle). The choice is remembered. These modes only take effect while FullPanel fullscreen is actually active with a housing:
+
+| Mode | Behavior |
+| --- | --- |
+| **iPhone Style Everywhere** (default) | Every page starts below the housing band. Scrolled content moves up through the strip beside the housing, like Safari under an iPhone's status bar. |
+| **Full-Bleed Unless Needed** (Hybrid) | Pages stay full-bleed beside the housing unless a detector finds essential content under it, such as a link, button or field, or fixed/sticky text. Those pages get the iPhone-style layout. The decision is remembered per site. |
+| **Off (Always Full-Bleed)** | No WebKit changes. The housing covers whatever is under it. |
+
+The mechanism is WebKit's `obscuredContentInsets` (macOS 26+), plus a band view in the page's own top-edge colour and a collision detector running in an isolated script world. Design, measurements and known limitations are in [docs/notch-guard.md](docs/notch-guard.md). The crisp scroll-under look relies on two **private** WebKit methods (`_addReasonToHideTopScrollPocket:`, `_setDrawsBackground:`). They are checked at runtime; if they're missing, the band is opaque instead. Launch the binary with `CHROMELESS_NOTCH_POCKET=show` to opt out.
+
+Overrides for a direct launch of `Contents/MacOS/Chromeless` (`open` doesn't pass environment variables): `CHROMELESS_FULLPANEL=0`, `CHROMELESS_NOTCH_GUARD=0|1`, `CHROMELESS_NOTCH_MODE=off|hybrid|everywhere`, `CHROMELESS_NOTCH_HINTS=0`. Reset the learned per-site decisions with `defaults delete com.brianmerchant.chromeless NotchGuardHints`.
+
+### macOS support caveats
+
+- FullPanelKit 0.1.0 is a developer preview built on private AppKit/SkyLight interfaces. Not suitable for the Mac App Store. It has only been hardware-verified on macOS 27.0.1 (MacBook Pro 14-inch, M1 Pro). The notch modes need macOS 26+ (`obscuredContentInsets`). The app builds for macOS 13+.
+- On a first visit to a site that needs it, Hybrid can shift the layout for a few frames. Repeat visits don't.
+- A window that's already fullscreen when FullPanel is enabled gets FullPanel on its next entry.
+
+## Testing
+
+```sh
+./build.sh                                   # the harness uses ./Chromeless.app
+tests/notch/run.sh fixtures                  # Hybrid detector on the fixtures (simulated housing, real windows)
+tests/notch/run.sh fullscreen                # REAL FullPanel fullscreen on the built-in display
+python3 tests/notch/summarize.py tests/notch/results/fixtures --expect
+```
+
+Test runs use a non-persistent website data store, so your cookies are untouched. They need Screen Recording permission for the terminal. Results land in `tests/notch/results/` (git-ignored).
 
 ## Use
 
@@ -48,7 +89,7 @@ It loads the page, waits for it to settle, writes a Retina PNG, and exits.
 
 ## Notes
 
-- Cookies and logins persist (kept in `~/Library/WebKit/com.chromeless.app/`), so YouTube stays signed in.
+- Cookies and logins persist (kept in `~/Library/WebKit/<bundle id>/`), so YouTube stays signed in.
 
 ## Passkeys
 
@@ -59,7 +100,7 @@ Apple gates WebAuthn in WKWebView behind the restricted `com.apple.developer.web
 
   ```sh
   PROVISIONING_PROFILE=chromeless.provisionprofile \
-  CODESIGN_IDENTITY="Apple Development: you@example.com (TEAMID)" ./build.sh
+  CODESIGN_IDENTITY="Apple Development: you@example.com (TEAMID)" BUNDLE_ID=<your App ID> ./build.sh
   ```
 
   The same binary detects the entitlement and stops hiding WebAuthn. macOS may show a one-time consent (System Settings → Privacy & Security lists passkey access for web browsers).
@@ -67,6 +108,7 @@ Apple gates WebAuthn in WKWebView behind the restricted `com.apple.developer.web
 - First `⇧⌘S` may trigger the standard macOS prompt to allow Desktop access.
 - Deliberately absent: tabs, find-in-page, downloads, history UI, extensions. That's the point.
 
-## License
+## License and attribution
 
-[MIT](LICENSE)
+[MIT](LICENSE). Chromeless © 2026 Antiwork, Inc. ([antiwork/chromeless](https://github.com/antiwork/chromeless)).
+The FullPanelKit integration and notch modes in this fork are by Brian Merchant, also under MIT. FullPanelKit is a separate MIT-licensed package ([brianmerchant/FullPanelKit](https://github.com/brianmerchant/FullPanelKit)), fetched by SwiftPM and not included in this repository.

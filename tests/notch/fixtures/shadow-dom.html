@@ -1,0 +1,8 @@
+<!doctype html><meta charset=utf-8><title>shadow dom</title><link rel=stylesheet href=common.css>
+<style>x-bar{position:fixed;top:0;left:0;right:0;height:48px;z-index:9;display:block} body{padding-top:48px}</style>
+<x-bar></x-bar>
+<main><h1>Controls inside an open shadow root</h1><p>Expect: detector pierces the shadow root; inset engaged.</p></main><div class=tall></div>
+<script>
+customElements.define('x-bar', class extends HTMLElement { constructor(){ super(); const r = this.attachShadow({mode: new URLSearchParams(location.search).get('mode') || 'open'});
+  r.innerHTML = '<style>:host{background:#065f46;color:#fff}.c{display:flex;justify-content:center;align-items:center;height:48px;gap:8px}input{width:300px;height:30px;border-radius:8px;border:0;padding:0 10px}button{height:30px;border:0;border-radius:8px;padding:0 12px}</style><div class=c><input placeholder="Search in shadow"><button>Go</button></div>'; } });
+</script>

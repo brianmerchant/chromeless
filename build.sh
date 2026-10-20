@@ -1,10 +1,29 @@
 #!/bin/zsh
-# Builds Chromeless.app from main.swift. No Xcode project, no dependencies.
+# Builds Chromeless.app with Swift Package Manager. No Xcode
+# project. The one dependency, FullPanelKit, is fetched from GitHub at the exact
+# version pinned in Package.swift / Package.resolved.
+#
+#   ./build.sh                                   # → ./Chromeless.app
+#   ./build.sh ~/Downloads/Chromeless-Build/Chromeless.app
+#   BUNDLE_ID=com.example.chromeless ./build.sh  # override the bundle identifier
 set -euo pipefail
 cd "${0:a:h}"
 
-APP="Chromeless.app"
+APP="${1:-Chromeless.app}"
+[[ "$APP" == *.app ]] || { echo "output must end in .app: $APP" >&2; exit 2; }
+# Separate from upstream Chromeless (com.chromeless.app): its own preferences,
+# cookies (~/Library/WebKit/<id>) and installation.
+BUNDLE_ID="${BUNDLE_ID:-com.brianmerchant.chromeless}"
 ARCH="$(uname -m)"
+
+# Never replace a different app (an upstream Chromeless.app, another build).
+if [[ -e "$APP" ]]; then
+  EXISTING="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP/Contents/Info.plist" 2>/dev/null || true)"
+  if [[ "$EXISTING" != "$BUNDLE_ID" ]]; then
+    echo "refusing to replace $APP (bundle id '${EXISTING:-unknown}', expected $BUNDLE_ID)" >&2
+    exit 1
+  fi
+fi
 
 if [[ ! -f Chromeless.icns ]]; then
   echo "▸ rendering icon"
@@ -14,16 +33,26 @@ if [[ ! -f Chromeless.icns ]]; then
   iconutil -c icns build/AppIcon.iconset -o Chromeless.icns
 fi
 
-echo "▸ compiling ($ARCH)"
-mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
-swiftc -O -swift-version 5 \
-  -target "$ARCH-apple-macos13.0" \
-  main.swift \
-  -o "$APP/Contents/MacOS/Chromeless" \
-  -framework Cocoa -framework WebKit
+# With Package.resolved present it is authoritative (no silent re-resolution).
+PINNED=()
+[[ -f Package.resolved ]] && PINNED=(--force-resolved-versions)
+echo "▸ resolving packages"
+swift package resolve $PINNED
 
-cp Chromeless.icns "$APP/Contents/Resources/Chromeless.icns"
-cat > "$APP/Contents/Info.plist" <<'PLIST'
+echo "▸ compiling ($ARCH, release)"
+swift build -c release --product Chromeless --arch "$ARCH" $PINNED
+BIN="$(swift build -c release --arch "$ARCH" --show-bin-path)/Chromeless"
+[[ -x "$BIN" ]] || { echo "compiled executable missing: $BIN" >&2; exit 1; }
+
+echo "▸ packaging $APP"
+# Assemble in a staging directory, then replace only this bundle.
+STAGE="$(mktemp -d "${TMPDIR:-/tmp}/chromeless-app.XXXXXX")"
+trap 'rm -rf "$STAGE"' EXIT
+BUNDLE="$STAGE/Chromeless.app"
+mkdir -p "$BUNDLE/Contents/MacOS" "$BUNDLE/Contents/Resources"
+cp "$BIN" "$BUNDLE/Contents/MacOS/Chromeless"
+cp Chromeless.icns "$BUNDLE/Contents/Resources/Chromeless.icns"
+cat > "$BUNDLE/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -31,7 +60,7 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
   <key>CFBundleName</key><string>Chromeless</string>
   <key>CFBundleDisplayName</key><string>Chromeless</string>
   <key>CFBundleExecutable</key><string>Chromeless</string>
-  <key>CFBundleIdentifier</key><string>com.chromeless.app</string>
+  <key>CFBundleIdentifier</key><string>$BUNDLE_ID</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleShortVersionString</key><string>1.0.0</string>
   <key>CFBundleVersion</key><string>1</string>
@@ -43,7 +72,7 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
   <key>NSSupportsAutomaticGraphicsSwitching</key><true/>
   <key>NSAppTransportSecurity</key>
   <dict><key>NSAllowsArbitraryLoads</key><true/></dict>
-  <key>NSHumanReadableCopyright</key><string>chromeless — the browser that isn’t there</string>
+  <key>NSHumanReadableCopyright</key><string>chromeless — the browser that isn’t there. Built with FullPanelKit.</string>
 </dict>
 </plist>
 PLIST
@@ -51,19 +80,24 @@ PLIST
 # Passkeys require Apple's restricted web-browser.public-key-credential
 # entitlement backed by a provisioning profile; macOS SIGKILLs ad-hoc builds
 # that claim it. Default: ad-hoc, no entitlement (app hides WebAuthn so sites
-# offer fallback sign-in). Once Apple grants the capability to your App ID:
+# offer fallback sign-in). Once Apple grants the capability to your App ID
+# (set BUNDLE_ID to match it):
 #   PROVISIONING_PROFILE=chromeless.provisionprofile \
 #   CODESIGN_IDENTITY="Apple Development: you@example.com (TEAMID)" ./build.sh
 if [[ -n "${CODESIGN_IDENTITY:-}" ]]; then
   if [[ -n "${PROVISIONING_PROFILE:-}" ]]; then
-    cp "$PROVISIONING_PROFILE" "$APP/Contents/embedded.provisionprofile"
+    cp "$PROVISIONING_PROFILE" "$BUNDLE/Contents/embedded.provisionprofile"
   fi
-  codesign --force --sign "$CODESIGN_IDENTITY" --entitlements chromeless.entitlements "$APP"
+  codesign --force --sign "$CODESIGN_IDENTITY" --entitlements chromeless.entitlements "$BUNDLE"
   echo "▸ signed as $CODESIGN_IDENTITY with passkey entitlement"
 else
-  codesign --force --sign - "$APP" 2>/dev/null
+  codesign --force --sign - "$BUNDLE" 2>/dev/null
 fi
+
+mkdir -p "$(dirname "$APP")"
+rm -rf "$APP"
+ditto "$BUNDLE" "$APP"
 SIZE=$(du -sh "$APP" | cut -f1)
-echo "✓ built $APP ($SIZE)"
+echo "✓ built $APP ($SIZE, $BUNDLE_ID)"
 echo "  try:  open $APP"
-echo "  or:   ./$APP/Contents/MacOS/Chromeless --help"
+echo "  or:   $APP/Contents/MacOS/Chromeless --help"

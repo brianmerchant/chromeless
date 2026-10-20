@@ -1,0 +1,14 @@
+{
+  "pins" : [
+    {
+      "identity" : "fullpanelkit",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/brianmerchant/FullPanelKit.git",
+      "state" : {
+        "revision" : "1911fa2146b383b9b8fe76570d530075bb838935",
+        "version" : "0.1.0"
+      }
+    }
+  ],
+  "version" : 2
+}

@@ -3,3 +3,7 @@ Chromeless.icns
 build/
 *.provisionprofile
 .DS_Store
+.build/
+# Earlier output name of this fork's build; kept so old local builds stay ignored.
+Chromeless-FullPanelKit.app/
+tests/notch/results/
