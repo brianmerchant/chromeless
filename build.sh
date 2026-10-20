@@ -1,19 +1,19 @@
 #!/bin/zsh
-# Builds Chromeless-FullPanelKit.app with Swift Package Manager. No Xcode
+# Builds Chromeless.app with Swift Package Manager. No Xcode
 # project. The one dependency, FullPanelKit, is fetched from GitHub at the exact
 # version pinned in Package.swift / Package.resolved.
 #
-#   ./build.sh                                   # → ./Chromeless-FullPanelKit.app
-#   ./build.sh ~/Downloads/Chromeless-FullPanelKit.app
+#   ./build.sh                                   # → ./Chromeless.app
+#   ./build.sh ~/Downloads/Chromeless-Build/Chromeless.app
 #   BUNDLE_ID=com.example.chromeless ./build.sh  # override the bundle identifier
 set -euo pipefail
 cd "${0:a:h}"
 
-APP="${1:-Chromeless-FullPanelKit.app}"
+APP="${1:-Chromeless.app}"
 [[ "$APP" == *.app ]] || { echo "output must end in .app: $APP" >&2; exit 2; }
 # Separate from upstream Chromeless (com.chromeless.app): its own preferences,
 # cookies (~/Library/WebKit/<id>) and installation.
-BUNDLE_ID="${BUNDLE_ID:-com.brianmerchant.chromeless-fullpanelkit}"
+BUNDLE_ID="${BUNDLE_ID:-com.brianmerchant.chromeless}"
 ARCH="$(uname -m)"
 
 # Never replace a different app (an upstream Chromeless.app, another build).
@@ -58,7 +58,7 @@ cat > "$BUNDLE/Contents/Info.plist" <<PLIST
 <plist version="1.0">
 <dict>
   <key>CFBundleName</key><string>Chromeless</string>
-  <key>CFBundleDisplayName</key><string>Chromeless FullPanelKit</string>
+  <key>CFBundleDisplayName</key><string>Chromeless</string>
   <key>CFBundleExecutable</key><string>Chromeless</string>
   <key>CFBundleIdentifier</key><string>$BUNDLE_ID</string>
   <key>CFBundlePackageType</key><string>APPL</string>

@@ -19,7 +19,7 @@ from SDK headers or the runtime and not exercised).
 | # | Finding | Status |
 |---|---|---|
 | R1 | `WKWebView.obscuredContentInsets` (macOS 26+) is an `NSEdgeInsets`: one value per edge. There is no rect/cutout form. | API/DOCS (SDK header) |
-| R2 | The WKWebView ObjC runtime has **no** cutout/exclusion-rect SPI. It does have private top-scroll-pocket and color-extension SPI (`_setShouldSuppressTopColorExtensionView:`, `_addReasonToHideTopScrollPocket:`, `_setObscuredContentInsets:immediate:` …). None of it is used. | TESTED (runtime method list) |
+| R2 | The WKWebView ObjC runtime has **no** cutout/exclusion-rect SPI. It does have private top-scroll-pocket and color-extension SPI (`_setShouldSuppressTopColorExtensionView:`, `_addReasonToHideTopScrollPocket:`, `_setObscuredContentInsets:immediate:` …). Only `_addReasonToHideTopScrollPocket:` and `_setDrawsBackground:` are used, for the iPhone-style scroll-under band. Both are resolved at runtime with type-encoding checks, and the band falls back to opaque when either is missing; `CHROMELESS_NOTCH_POCKET=show` opts out. The rest is unused. | TESTED (runtime method list) |
 | R3 | With `obscuredContentInsets.top = 38` the layout viewport shrinks (`innerHeight` 1000→962), viewport y=0 moves below the inset, and `position:fixed; top:0` lands at the inset edge. Width and horizontal layout are unchanged. | TESTED (probe) |
 | R4 | When the inset is set after load, the page sees it about 1 frame (~13 ms) later. When it is set before the document's first layout, the first layout already uses it, so there is no shift. | TESTED (probe; "warm visit" column below) |
 | R5 | `env(safe-area-inset-top)` stays `0px` under `obscuredContentInsets`, so CSS safe-area is not a usable channel on macOS. | TESTED (probe) |
@@ -89,8 +89,9 @@ only for pages that actually need it.
 Integration in `main.swift`: geometry from `FullPanelWindow.fullPanelLayout.cameraHousing`
 while FullPanel is active; hooks on commit, zoom, resize, fullscreen will/did enter/exit,
 `FullPanelWindow.stateDidChangeNotification`, and `fullscreenState` KVO. The legacy
-`applyFullPanelWebKitInset` stands down when the guard is on. Without the flags nothing is
-installed (verified: snapshot CLI mode produces zero guard log lines).
+`applyFullPanelWebKitInset` stands down when the guard is on. The guard is on by default, together
+with FullPanel fullscreen, unless `CHROMELESS_NOTCH_GUARD=0` or `CHROMELESS_FULLPANEL=0`
+turns it off. Without an active FullPanel housing it changes nothing.
 
 ## 4. Build and automated tests
 
@@ -182,7 +183,7 @@ runner and are git-ignored (≈140 MB).
 - **K2 The learned decision is per origin.** If an origin mixes pages that collide with
   pages that don't, the previous visit's decision is applied at commit. A wrong "on" stays
   for that document (an unneeded band, but no jump); a wrong "off" costs the K1 shift.
-  Reset with `defaults delete com.chromeless.fullpanelkit NotchGuardHints`.
+  Reset with `defaults delete com.brianmerchant.chromeless NotchGuardHints`.
 - **K3 Late collisions still shift once.** That covers headers that appear on scroll-up
   (headroom-style), sticky bars inside inner scrollers, and content inserted after load.
   The shift coincides with the page's own change. The decision is then kept.
@@ -203,15 +204,15 @@ runner and are git-ignored (≈140 MB).
 - **K10 Simulated runs used a 1131 pt tall window** (the screen minus the menu bar), vs
   1169 pt in real fullscreen. Only the height differs, and the real-fullscreen runs cover
   the true size.
-- No regressions found. The default app (no flags) installs nothing. The legacy
+- No regressions found. The default app enables the guard (see §6); it has no effect until
+  FullPanel fullscreen is active with a housing. The legacy
   `CHROMELESS_NOTCH_INSET` path is unchanged when the guard is off.
 
 ## 6. Launch and manual validation
 
 ```sh
-./build-fullpanel.sh        # incremental
-open -n Chromeless-FullPanelKit.app          # or double-click it in Finder
-ditto Chromeless-FullPanelKit.app ~/Applications/Chromeless-FullPanelKit.app   # install
+./build.sh                  # SwiftPM build → ./Chromeless.app (com.brianmerchant.chromeless)
+open -n Chromeless.app      # or double-click it in Finder
 # Control-Command-F for fullscreen; View ▸ Notch or Option-Command-N cycles modes.
 ```
 

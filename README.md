@@ -11,15 +11,15 @@ A native macOS app built on WKWebView (the Safari engine). No Electron, ~1 MB bu
 ## Build
 
 ```sh
-./build.sh                                        # → ./Chromeless-FullPanelKit.app
-./build.sh ~/Downloads/Chromeless-FullPanelKit.app  # or any output path ending in .app
-open Chromeless-FullPanelKit.app
+./build.sh                                          # → ./Chromeless.app
+./build.sh ~/Downloads/Chromeless-Build/Chromeless.app  # or any output path ending in .app
+open Chromeless.app
 ```
 
 Requires the Xcode Command Line Tools (`xcode-select --install`, Swift 5.9+). `build.sh` runs `swift build -c release` (Swift Package Manager) and packages the executable, icon and Info.plist into the app.
 
 - **Dependency:** `https://github.com/brianmerchant/FullPanelKit.git`, `exact: "0.1.0"` (tag `v0.1.0`, commit `1911fa2146b383b9b8fe76570d530075bb838935`, recorded in `Package.resolved`). The build passes `--force-resolved-versions`, so it never re-resolves silently. No local path dependency, no vendored source.
-- **Bundle identifier:** `com.brianmerchant.chromeless-fullpanelkit`, separate from upstream Chromeless (`com.chromeless.app`). It has its own preferences, cookies (`~/Library/WebKit/<id>`) and install. Override with `BUNDLE_ID=…`. `build.sh` refuses to replace an existing bundle that has a different identifier.
+- **App name and bundle identifier:** `Chromeless.app`, `com.brianmerchant.chromeless`, separate from upstream Chromeless (`com.chromeless.app`). It has its own preferences, cookies (`~/Library/WebKit/<id>`) and install. Override with `BUNDLE_ID=…`. `build.sh` refuses to replace an existing bundle that has a different identifier.
 
 ## Fullscreen beside the camera housing (FullPanelKit)
 
@@ -37,7 +37,7 @@ Windows are `FullPanelWindow`s with FullPanel enabled at creation, before any fu
 
 The mechanism is WebKit's `obscuredContentInsets` (macOS 26+), plus a band view in the page's own top-edge colour and a collision detector running in an isolated script world. Design, measurements and known limitations are in [docs/notch-guard.md](docs/notch-guard.md). The crisp scroll-under look relies on two **private** WebKit methods (`_addReasonToHideTopScrollPocket:`, `_setDrawsBackground:`). They are checked at runtime; if they're missing, the band is opaque instead. Launch the binary with `CHROMELESS_NOTCH_POCKET=show` to opt out.
 
-Overrides for a direct launch of `Contents/MacOS/Chromeless` (`open` doesn't pass environment variables): `CHROMELESS_FULLPANEL=0`, `CHROMELESS_NOTCH_GUARD=0|1`, `CHROMELESS_NOTCH_MODE=off|hybrid|everywhere`, `CHROMELESS_NOTCH_HINTS=0`. Reset the learned per-site decisions with `defaults delete com.brianmerchant.chromeless-fullpanelkit NotchGuardHints`.
+Overrides for a direct launch of `Contents/MacOS/Chromeless` (`open` doesn't pass environment variables): `CHROMELESS_FULLPANEL=0`, `CHROMELESS_NOTCH_GUARD=0|1`, `CHROMELESS_NOTCH_MODE=off|hybrid|everywhere`, `CHROMELESS_NOTCH_HINTS=0`. Reset the learned per-site decisions with `defaults delete com.brianmerchant.chromeless NotchGuardHints`.
 
 ### macOS support caveats
 
@@ -48,7 +48,7 @@ Overrides for a direct launch of `Contents/MacOS/Chromeless` (`open` doesn't pas
 ## Testing
 
 ```sh
-./build.sh                                   # the harness uses ./Chromeless-FullPanelKit.app
+./build.sh                                   # the harness uses ./Chromeless.app
 tests/notch/run.sh fixtures                  # Hybrid detector on the fixtures (simulated housing, real windows)
 tests/notch/run.sh fullscreen                # REAL FullPanel fullscreen on the built-in display
 python3 tests/notch/summarize.py tests/notch/results/fixtures --expect

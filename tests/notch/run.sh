@@ -7,11 +7,11 @@
 #                                            the built-in display ~20 s per page
 # Each run opens a real 1800-pt-wide window (simulated 220x38 housing centered
 # at its top), drives real scroll/click/key events and screen-captures it.
-# Needs: Chromeless-FullPanelKit.app built (./build.sh) and the
+# Needs: Chromeless.app built (./build.sh) and the
 # terminal's existing Screen Recording permission (screencapture -l).
 set -u
 ROOT="${0:a:h:h:h}"
-APP="$ROOT/Chromeless-FullPanelKit.app/Contents/MacOS/Chromeless"
+APP="$ROOT/Chromeless.app/Contents/MacOS/Chromeless"
 FIX="$ROOT/tests/notch/fixtures"
 SUITE="${1:-fixtures}"
 [[ -x "$APP" ]] || { echo "build first: ./build.sh"; exit 1; }
